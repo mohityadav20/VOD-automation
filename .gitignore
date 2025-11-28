@@ -1,0 +1,16 @@
+ # Python / venv
+ .venv/
+ __pycache__/
+ *.pyc
+
+ # Logs & screenshots (keep folder with .gitkeep only)
+ logs/*
+ !logs/.gitkeep
+ logs/screenshots/*
+ !logs/screenshots/.gitkeep
+
+ # Local Excel/CSV sheets (keep folder with .gitkeep only)
+ excel meta data sheets/*
+ !excel meta data sheets/.gitkeep
+
+
