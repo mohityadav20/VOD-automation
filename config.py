@@ -13,6 +13,9 @@ TAGS_COL = "Tag(s)"
 TRAILER_KEY_COL = "Trailer Filename"     # exact column name in your sheet
 # New: column that indicates availability types (must contain 'tvod' to create a project)
 AVAIL_TYPE_COL = "Avail Type(s)"
+# New: columns for distribution regions in VOD campaign creation
+AVAIL_INCLUDED_COL = "Avail Countries Included"
+AVAIL_EXCLUDED_COL = "Avail Countries Excluded"
 START_URL = "https://filmmakers.brew.tv/dashboard/filmmaker/create-new-project?mode=create"  # starting create page
 WAIT_TIMEOUT = 20
 HEADLESS = False  # keep False to watch the browser in real-time

@@ -82,7 +82,7 @@ def clear_keywords(driver):
         inp = wait_for(driver, KEYWORDS_INPUT, timeout=config.WAIT_TIMEOUT)
         inp.click()
         # This field does not support Ctrl+A reliably, so just spam BACKSPACE
-        for _ in range(100):
+        for _ in range(120):
             inp.send_keys(Keys.BACKSPACE)
         time.sleep(0.5)
         save_ss(driver, "keywords_cleared_input")
@@ -98,14 +98,13 @@ def add_tags(driver, tags_text):
         logging.info("No tags to add.")
         return
     logging.info("Adding tags: %s", parts)
-    # After clear_keywords, the keywords input already has focus. Rely on the active element
-    # instead of re-finding by placeholder (which can change once focused).
-    try:
-        inp = driver.switch_to.active_element
-    except Exception:
-        inp = wait_for(driver, KEYWORDS_INPUT, timeout=config.WAIT_TIMEOUT)
-        inp.click()
     for t in parts:
+        # Re-acquire the input element on each tag to avoid stale element issues
+        try:
+            inp = driver.switch_to.active_element
+        except Exception:
+            inp = wait_for(driver, KEYWORDS_INPUT, timeout=config.WAIT_TIMEOUT)
+            inp.click()
         inp.send_keys(t)
         time.sleep(0.15)
         inp.send_keys(Keys.ENTER)
@@ -228,7 +227,9 @@ def submit_final_project(driver):
     """
     logging.info("Clicking final 'Create Project' button...")
     safe_click(driver, PAGE5_CREATE_BUTTON, timeout=config.WAIT_TIMEOUT)
-    time.sleep(3.0)
+    # Give the platform time to finish creating the project and load the success screen
+    logging.info("Waiting ~8 seconds for project creation to finalize...")
+    time.sleep(8.0)
     save_ss(driver, "project_created")
 
 def load_sheet(path: str) -> pd.DataFrame:
@@ -237,7 +238,26 @@ def load_sheet(path: str) -> pd.DataFrame:
     based on the extension of config.EXCEL_PATH.
     """
     if path.lower().endswith(".csv"):
-        return pd.read_csv(path)
+        # Some CSV files have trailing commas causing extra empty fields
+        # Read with Python's csv module first to normalize field counts
+        import csv
+        with open(path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            headers = next(reader)
+            data_rows = list(reader)
+        
+        # Truncate each row to match header count
+        normalized_rows = []
+        for row in data_rows:
+            if len(row) > len(headers):
+                # Trim extra fields
+                row = row[:len(headers)]
+            elif len(row) < len(headers):
+                # Pad with empty strings
+                row = row + [''] * (len(headers) - len(row))
+            normalized_rows.append(row)
+        
+        return pd.DataFrame(normalized_rows, columns=headers)
     return pd.read_excel(path)
 
 
@@ -310,9 +330,12 @@ def main():
         def _has_tvod(val) -> bool:
             if pd.isna(val):
                 return False
-            return "tvod" in str(val).lower()
+            val_str = str(val).lower().strip()
+            logging.debug("Checking TVOD in value: %r (lowercase: %r)", val, val_str)
+            return "tvod" in val_str
 
         mask = df[avail_col].apply(_has_tvod)
+        logging.info("TVOD mask results: %s", mask.tolist())
         if not mask.any():
             logging.warning(
                 "No rows have 'tvod' in column '%s'. Cannot create any projects. "
@@ -321,8 +344,8 @@ def main():
             )
             for idx, row in df.iterrows():
                 logging.info(
-                    "Row %d skipped: %s=%r",
-                    idx + 1,
+                    "Row %s skipped: %s=%r",
+                    idx,
                     avail_col,
                     row.get(avail_col, ""),
                 )
@@ -371,12 +394,21 @@ def main():
                     go_next_page(driver, PAGE3_NEXT_BUTTON, "page3->page4")
                     fill_relationship_and_next(driver)
                     submit_final_project(driver)
-            save_ss(driver, f"row_{idx+1}_done")
+            
+            logging.info("Project creation completed for row %d. Browser left open for campaign creation.", idx+1)
+            save_ss(driver, f"row_{idx+1}_project_created")
             time.sleep(1.0)
         except Exception as e:
             logging.exception("Row %d error: %s", idx+1, e)
             save_ss(driver, f"row_{idx+1}_exc")
-    logging.info("All rows processed. Inspect browser; close when ready.")
+    
+    logging.info("="*80)
+    logging.info("Project creation completed for all rows.")
+    logging.info("Browser will remain open for campaign creation.")
+    logging.info("Run 'python campaign_main.py' to create campaigns for these projects.")
+    logging.info("="*80)
+    
+    input("\nPress ENTER to close the browser and exit...")
     # driver.quit()
 
 if __name__ == "__main__":
