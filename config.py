@@ -18,4 +18,10 @@ AVAIL_INCLUDED_COL = "Avail Countries Included"
 AVAIL_EXCLUDED_COL = "Avail Countries Excluded"
 START_URL = "https://filmmakers.brew.tv/dashboard/filmmaker/create-new-project?mode=create"  # starting create page
 WAIT_TIMEOUT = 20
+IMDB_FETCH_TIMEOUT = 70  # Wait up to 70 seconds for IMDb fetch to populate details
 HEADLESS = False  # keep False to watch the browser in real-time
+
+# Login automation
+AUTO_LOGIN = True
+LOGIN_EMAIL = "+c$re&te-st^!*r1992channel-operations@filmhub.com"
+LOGIN_OTP = "123456"

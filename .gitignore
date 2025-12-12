@@ -1,4 +1,14 @@
- # Python / venv
+# Ignore local data and logs
+excel meta data sheets/
+logs/
+
+# Common Python ignores
+__pycache__/
+.venv/
+*.pyc
+*.pyo
+*.pytest_cache/
+.DS_Store # Python / venv
  .venv/
  __pycache__/
  *.pyc

@@ -7,6 +7,22 @@ IMDB_TRIGGER_BUTTON = (By.CSS_SELECTOR, 'button.fetch-imdb')   # optional: if yo
 SYNOPSIS_TEXTAREA = (By.CSS_SELECTOR, 'textarea[placeholder="This is the Star Wars: The Rise of Skywalker synopsis ..."]')
 PAGE1_NEXT_BUTTON = (By.XPATH, '//button[.//span[contains(normalize-space(.),"Add Specifications")]]')
 
+# AUTH / LOGIN
+LOGIN_EMAIL_INPUT = (By.CSS_SELECTOR, 'input[placeholder="Enter your email address"]')
+LOGIN_CONTINUE_BUTTON = (
+    By.XPATH,
+    '//button[.//span[contains(normalize-space(.),"Continue with Email")]]'
+)
+# OTP input is flexible; match common OTP inputs
+LOGIN_OTP_INPUT = (
+    By.CSS_SELECTOR,
+    'input[placeholder*="OTP" i], input[placeholder*="verification" i], input[autocomplete="one-time-code"], input[maxlength="6"], input[name*="otp" i]'
+)
+LOGIN_OTP_SUBMIT = (
+    By.XPATH,
+    '//button[.//span[contains(normalize-space(.),"Verify") or contains(normalize-space(.),"Continue") or contains(normalize-space(.),"Submit")]]'
+)
+
 # PAGE 2 - Project Specifications (Keywords)
 # We clear keywords by first removing one chip via its "x" button (if present),
 # then using BACKSPACE in the main input. Scope selectors to the Keywords box only.

@@ -24,6 +24,73 @@ def build_driver():
     driver.maximize_window()
     return driver
 
+
+def perform_login(driver) -> bool:
+    """
+    Attempt automated login using configured email/OTP.
+    Retries up to 3 times if login page reappears after submission.
+    Returns True if successfully logged in (URL changed from login page).
+    """
+    if not getattr(config, "AUTO_LOGIN", False):
+        logging.info("AUTO_LOGIN disabled; skipping automated login.")
+        return False
+
+    login_url = "https://filmmakers.brew.tv/filmmaker-login"
+    max_attempts = 3
+
+    for attempt in range(1, max_attempts + 1):
+        logging.info(f"Login attempt {attempt}/{max_attempts}...")
+        try:
+            email_input = wait_for(driver, LOGIN_EMAIL_INPUT, timeout=config.WAIT_TIMEOUT)
+            email_input.click()
+            email_input.clear()
+            email_input.send_keys(getattr(config, "LOGIN_EMAIL", ""))
+            save_ss(driver, f"login_email_filled_attempt_{attempt}")
+
+            safe_click(driver, LOGIN_CONTINUE_BUTTON, timeout=config.WAIT_TIMEOUT)
+            logging.info("Email submitted, waiting for OTP field...")
+
+            try:
+                otp_input = wait_for(driver, LOGIN_OTP_INPUT, timeout=30)
+                otp_input.click()
+                otp_input.clear()
+                otp_input.send_keys(getattr(config, "LOGIN_OTP", "123456"))
+                save_ss(driver, f"login_otp_filled_attempt_{attempt}")
+                try:
+                    safe_click(driver, LOGIN_OTP_SUBMIT, timeout=10)
+                except Exception:
+                    otp_input.send_keys(Keys.ENTER)
+                
+                time.sleep(3)
+                save_ss(driver, f"login_submitted_attempt_{attempt}")
+                
+                # Check if URL changed away from login page
+                current_url = driver.current_url
+                logging.info(f"Current URL after login: {current_url}")
+                
+                if login_url not in current_url:
+                    logging.info("✓ Login successful! URL changed away from login page.")
+                    save_ss(driver, "login_successful")
+                    return True
+                else:
+                    logging.warning(f"Login page still visible (attempt {attempt}). Retrying...")
+                    save_ss(driver, f"login_failed_url_check_attempt_{attempt}")
+                    time.sleep(2)
+                    continue
+                    
+            except Exception as e:
+                logging.warning(f"OTP input failed (attempt {attempt}): {e}")
+                save_ss(driver, f"login_otp_failed_attempt_{attempt}")
+                continue
+                
+        except Exception as e:
+            logging.warning(f"Login attempt {attempt} failed at email step: {e}")
+            save_ss(driver, f"login_email_failed_attempt_{attempt}")
+            continue
+
+    logging.error("Login failed after 3 attempts. Manual login required.")
+    return False
+
 def paste_imdb_and_fetch(driver, imdb_link):
     logging.info("Pasting IMDb link...")
     imdb_input = wait_for(driver, IMDB_INPUT, timeout=config.WAIT_TIMEOUT)
@@ -39,8 +106,30 @@ def paste_imdb_and_fetch(driver, imdb_link):
         btn.click()
     except Exception:
         imdb_input.send_keys(Keys.ENTER)
-    # give the site time to fetch and populate data before touching synopsis
-    time.sleep(6)
+    # Wait for IMDb fetch to populate (synopsis usually fills in). Allow longer with timeout.
+    fetch_timeout = getattr(config, "IMDB_FETCH_TIMEOUT", 30)
+    poll_interval = 1.0
+    deadline = time.time() + fetch_timeout
+    filled = False
+    while time.time() < deadline:
+        try:
+            ta = driver.find_element(*SYNOPSIS_TEXTAREA)
+            val = ta.get_attribute("value") or ta.text or ""
+            if len(val.strip()) > 0:
+                filled = True
+                break
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+    if not filled:
+        logging.error(
+            "IMDb fetch did not populate synopsis within %ss; aborting run as requested.",
+            fetch_timeout,
+        )
+        save_ss(driver, "after_imdb_fetch_failed")
+        raise SystemExit("IMDb fetch failed to populate details within timeout")
+    else:
+        logging.info("IMDb fetch populated synopsis before timeout.")
     save_ss(driver, "after_imdb_fetch")
 
 def replace_synopsis(driver, synopsis_text):
@@ -61,33 +150,40 @@ def go_next_page(driver, next_selector, step_name="next"):
 
 def clear_keywords(driver):
     """
-    Clear all existing keywords by focusing the keywords input and
-    repeatedly backspacing / deleting any content.
+    Clear all existing keywords by removing each chip individually,
+    while maintaining focus on the input field.
     """
-    logging.info("Clearing keywords via backspace in input...")
+    logging.info("Clearing keywords by removing chips...")
     try:
-        # If we are already at the 10-keyword limit, the input can be disabled until
-        # at least one chip is removed. Try clicking the 'x' on one keyword first.
-        try:
-            remove_buttons = driver.find_elements(*KEYWORDS_CHIP_REMOVE)
-            if remove_buttons:
+        # Cache the input element so we can restore focus after removals
+        inp = wait_for(driver, KEYWORDS_INPUT, timeout=config.WAIT_TIMEOUT)
+
+        max_iterations = 20  # Safety limit to prevent infinite loops
+        for iteration in range(max_iterations):
+            try:
+                remove_buttons = driver.find_elements(*KEYWORDS_CHIP_REMOVE)
+                if not remove_buttons:
+                    logging.info("All keyword chips removed.")
+                    break
+
                 btn = remove_buttons[0]
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'})", btn)
-                btn.click()
+                driver.execute_script("arguments[0].click();", btn)  # JS click for reliability
                 time.sleep(0.3)
-                logging.info("Clicked one keyword remove (x) button before clearing via backspace.")
-        except Exception as e:
-            logging.debug("No removable keyword chip found or click failed: %s", e)
+                logging.debug(f"Removed keyword chip (iteration {iteration + 1})")
+            except Exception as e:
+                logging.debug(f"Error removing keyword chip: {e}")
+                break
 
-        inp = wait_for(driver, KEYWORDS_INPUT, timeout=config.WAIT_TIMEOUT)
-        inp.click()
-        # This field does not support Ctrl+A reliably, so just spam BACKSPACE
-        for _ in range(120):
-            inp.send_keys(Keys.BACKSPACE)
-        time.sleep(0.5)
-        save_ss(driver, "keywords_cleared_input")
+        # Restore focus to the input so the next tags can be entered
+        time.sleep(0.3)
+        driver.execute_script("arguments[0].focus();", inp)
+        time.sleep(0.3)
+
+        save_ss(driver, "keywords_cleared")
+        logging.info("Keyword clearing completed. Focus maintained on input field.")
     except Exception as e:
-        logging.error("Clearing keywords via input failed: %s", e)
+        logging.error("Clearing keywords failed: %s", e)
         save_ss(driver, "keywords_clear_failed")
 
 def add_tags(driver, tags_text):
@@ -97,7 +193,9 @@ def add_tags(driver, tags_text):
     if not parts:
         logging.info("No tags to add.")
         return
-    logging.info("Adding tags: %s", parts)
+    # Limit to first 10 tags (project creation allows up to 10 keywords)
+    parts = parts[:10]
+    logging.info("Adding tags (max 10): %s", parts)
     for t in parts:
         # Re-acquire the input element on each tag to avoid stale element issues
         try:
@@ -337,29 +435,33 @@ def main():
         mask = df[avail_col].apply(_has_tvod)
         logging.info("TVOD mask results: %s", mask.tolist())
         if not mask.any():
-            logging.warning(
-                "No rows have 'tvod' in column '%s'. Cannot create any projects. "
-                "Browser will not be opened.",
-                avail_col,
+            warning_msg = (
+                "*** WARNING: No rows have 'tvod' in column '%s'. "
+                "Projects will not be filtered by TVOD. Proceed anyway? (y/n): "
             )
+            logging.warning("%s", warning_msg % avail_col)
             for idx, row in df.iterrows():
                 logging.info(
-                    "Row %s skipped: %s=%r",
+                    "Row %s skipped by TVOD filter: %s=%r",
                     idx,
                     avail_col,
                     row.get(avail_col, ""),
                 )
-            return
-
-        skipped = len(df) - int(mask.sum())
-        if skipped > 0:
-            logging.info(
-                "Filtering rows by 'tvod' in '%s': %d rows will be processed, %d skipped.",
-                avail_col,
-                int(mask.sum()),
-                skipped,
-            )
-        df = df[mask].reset_index(drop=True)
+            resp = input(warning_msg % avail_col).strip().lower()
+            if resp != "y":
+                logging.info("User chose not to proceed without TVOD. Exiting.")
+                return
+            logging.info("Proceeding without TVOD filter as requested.")
+        else:
+            skipped = len(df) - int(mask.sum())
+            if skipped > 0:
+                logging.info(
+                    "Filtering rows by 'tvod' in '%s': %d rows will be processed, %d skipped.",
+                    avail_col,
+                    int(mask.sum()),
+                    skipped,
+                )
+            df = df[mask].reset_index(drop=True)
     else:
         logging.warning(
             "Column '%s' not found in sheet. TVOD gating is skipped; all rows will be processed.",
@@ -368,8 +470,12 @@ def main():
     driver = build_driver()
     driver.get(config.START_URL)
     time.sleep(2)
-    logging.info("Please login manually in the opened browser if required, then return to terminal and press ENTER.")
-    input("Press ENTER after you log in and are on the create-project start page...")
+    auto_ok = perform_login(driver)
+    if auto_ok:
+        logging.info("Automated login submitted. Waiting 2s before continuing...")
+        time.sleep(2)
+    logging.info("If login still needed, complete it in the browser.")
+    input("Press ENTER to start project creation once you are on the create-project start page...")
 
     for idx, row in df.iterrows():
         logging.info("Processing %d/%d", idx+1, len(df))
@@ -405,11 +511,21 @@ def main():
     logging.info("="*80)
     logging.info("Project creation completed for all rows.")
     logging.info("Browser will remain open for campaign creation.")
-    logging.info("Run 'python campaign_main.py' to create campaigns for these projects.")
     logging.info("="*80)
-    
-    input("\nPress ENTER to close the browser and exit...")
-    # driver.quit()
+
+    # Prompt user to continue to campaign creation
+    proceed = input("\nDo you want to proceed to campaign creation? (y/n): ").strip().lower()
+    if proceed == "y":
+        logging.info("Proceeding to campaign creation...")
+        import subprocess
+        import sys
+        # Close the project browser first (campaign opens its own window)
+        driver.quit()
+        # Use the same Python executable and environment
+        subprocess.run([sys.executable, "campaign_main.py"])
+    else:
+        logging.info("Browser will be closed as requested.")
+        driver.quit()
 
 if __name__ == "__main__":
     main()

@@ -15,6 +15,10 @@ from selectors_example import (
     CAMPAIGN_PROJECT_FIRST_CARD,
     CAMPAIGN_TYPE_VOD_CARD,
     CAMPAIGN_NEXT_BUTTON,
+    LOGIN_EMAIL_INPUT,
+    LOGIN_CONTINUE_BUTTON,
+    LOGIN_OTP_INPUT,
+    LOGIN_OTP_SUBMIT,
     DIST_REGION_WORLD_BUTTON,
     DIST_REGION_SPECIFIC_BUTTON,
     DIST_REGION_EXCEPT_BUTTON,
@@ -88,6 +92,79 @@ def build_driver():
     return driver
 
 
+def perform_login(driver) -> bool:
+    """
+    Attempt automated login using configured email/OTP.
+    Retries up to 3 times if login page reappears after submission.
+    Returns True if successfully logged in (URL changed from login page).
+    """
+    if not getattr(config, "AUTO_LOGIN", False):
+        logging.info("AUTO_LOGIN disabled; skipping automated login.")
+        return False
+
+    login_url = "https://filmmakers.brew.tv/filmmaker-login"
+    max_attempts = 3
+
+    for attempt in range(1, max_attempts + 1):
+        logging.info(f"Login attempt {attempt}/{max_attempts}...")
+        try:
+            email_input = wait_for(driver, LOGIN_EMAIL_INPUT, timeout=config.WAIT_TIMEOUT)
+            email_input.click()
+            try:
+                email_input.clear()
+            except Exception:
+                pass
+            email_input.send_keys(getattr(config, "LOGIN_EMAIL", ""))
+            save_ss(driver, f"login_email_filled_attempt_{attempt}")
+
+            safe_click(driver, LOGIN_CONTINUE_BUTTON, timeout=config.WAIT_TIMEOUT)
+            logging.info("Email submitted, waiting for OTP field...")
+
+            try:
+                otp_input = wait_for(driver, LOGIN_OTP_INPUT, timeout=30)
+                otp_input.click()
+                try:
+                    otp_input.clear()
+                except Exception:
+                    pass
+                otp_input.send_keys(getattr(config, "LOGIN_OTP", "123456"))
+                save_ss(driver, f"login_otp_filled_attempt_{attempt}")
+                try:
+                    safe_click(driver, LOGIN_OTP_SUBMIT, timeout=10)
+                except Exception:
+                    otp_input.send_keys(Keys.ENTER)
+                
+                time.sleep(3)
+                save_ss(driver, f"login_submitted_attempt_{attempt}")
+                
+                # Check if URL changed away from login page
+                current_url = driver.current_url
+                logging.info(f"Current URL after login: {current_url}")
+                
+                if login_url not in current_url:
+                    logging.info("✓ Login successful! URL changed away from login page.")
+                    save_ss(driver, "login_successful")
+                    return True
+                else:
+                    logging.warning(f"Login page still visible (attempt {attempt}). Retrying...")
+                    save_ss(driver, f"login_failed_url_check_attempt_{attempt}")
+                    time.sleep(2)
+                    continue
+                    
+            except Exception as e:
+                logging.warning(f"OTP input failed (attempt {attempt}): {e}")
+                save_ss(driver, f"login_otp_failed_attempt_{attempt}")
+                continue
+                
+        except Exception as e:
+            logging.warning(f"Login attempt {attempt} failed at email step: {e}")
+            save_ss(driver, f"login_email_failed_attempt_{attempt}")
+            continue
+
+    logging.error("Login failed after 3 attempts. Manual login required.")
+    return False
+
+
 def decide_distribution_strategy(row: pd.Series) -> str:
     """
     Decide which distribution region strategy to use based on the row's
@@ -152,13 +229,13 @@ def select_distribution_regions(driver, row: pd.Series):
 def fill_worldwide_pricing(driver):
     """
     Fill pricing for World Wide distribution with hardcoded values:
-    - Rental (HD & SD): Price = $4.99, Perceived = $7.99
+    - Rental (HD & SD): Price = $4.99, Perceived = $6.99
     - Purchase (HD & SD): Price = $9.99, Perceived = $12.99
     """
     logging.info("Filling World Wide pricing options...")
     
-    # Rental Price - HD: Price $4.99, Perceived $7.99
-    logging.info("Setting Rental HD: Price $4.99, Perceived $7.99")
+    # Rental Price - HD: Price $4.99, Perceived $6.99
+    logging.info("Setting Rental HD: Price $4.99, Perceived $6.99")
     safe_click(driver, RENTAL_HD_CHECKBOX, timeout=config.WAIT_TIMEOUT)
     time.sleep(0.5)
     rental_hd_price = driver.find_element(*RENTAL_HD_PRICE_INPUT)
@@ -167,12 +244,12 @@ def fill_worldwide_pricing(driver):
     time.sleep(0.3)
     rental_hd_perceived = driver.find_element(*RENTAL_HD_PERCEIVED_INPUT)
     rental_hd_perceived.clear()
-    rental_hd_perceived.send_keys("7.99")
+    rental_hd_perceived.send_keys("6.99")
     time.sleep(0.3)
     save_ss(driver, "pricing_rental_hd_filled")
     
-    # Rental Price - SD: Price $4.99, Perceived $7.99
-    logging.info("Setting Rental SD: Price $4.99, Perceived $7.99")
+    # Rental Price - SD: Price $4.99, Perceived $6.99
+    logging.info("Setting Rental SD: Price $4.99, Perceived $6.99")
     safe_click(driver, RENTAL_SD_CHECKBOX, timeout=config.WAIT_TIMEOUT)
     time.sleep(0.5)
     rental_sd_price = driver.find_element(*RENTAL_SD_PRICE_INPUT)
@@ -181,7 +258,7 @@ def fill_worldwide_pricing(driver):
     time.sleep(0.3)
     rental_sd_perceived = driver.find_element(*RENTAL_SD_PERCEIVED_INPUT)
     rental_sd_perceived.clear()
-    rental_sd_perceived.send_keys("7.99")
+    rental_sd_perceived.send_keys("6.99")
     time.sleep(0.3)
     save_ss(driver, "pricing_rental_sd_filled")
     
@@ -246,64 +323,64 @@ def add_india_custom_pricing(driver):
 def fill_india_pricing(driver):
     """
     Fill pricing for India (INR) with hardcoded values:
-    - Rental (HD & SD): Price = ₹149, Perceived = ₹299
-    - Purchase (HD & SD): Price = ₹249, Perceived = ₹399
+    - Rental (HD & SD): Price = ₹49, Perceived = ₹79
+    - Purchase (HD & SD): Price = ₹149, Perceived = ₹249
     """
     logging.info("Filling India pricing options (INR)...")
     
-    # Rental Price - HD: Price ₹149, Perceived ₹299
-    logging.info("Setting India Rental HD: Price ₹149, Perceived ₹299")
+    # Rental Price - HD: Price ₹49, Perceived ₹79
+    logging.info("Setting India Rental HD: Price ₹49, Perceived ₹79")
     safe_click(driver, INDIA_RENTAL_HD_CHECKBOX, timeout=config.WAIT_TIMEOUT)
     time.sleep(0.5)
     india_rental_hd_price = driver.find_element(*INDIA_RENTAL_HD_PRICE_INPUT)
     india_rental_hd_price.clear()
-    india_rental_hd_price.send_keys("149")
+    india_rental_hd_price.send_keys("49")
     time.sleep(0.3)
     india_rental_hd_perceived = driver.find_element(*INDIA_RENTAL_HD_PERCEIVED_INPUT)
     india_rental_hd_perceived.clear()
-    india_rental_hd_perceived.send_keys("299")
+    india_rental_hd_perceived.send_keys("79")
     time.sleep(0.3)
     save_ss(driver, "india_pricing_rental_hd_filled")
     
-    # Rental Price - SD: Price ₹149, Perceived ₹299
-    logging.info("Setting India Rental SD: Price ₹149, Perceived ₹299")
+    # Rental Price - SD: Price ₹49, Perceived ₹79
+    logging.info("Setting India Rental SD: Price ₹49, Perceived ₹79")
     safe_click(driver, INDIA_RENTAL_SD_CHECKBOX, timeout=config.WAIT_TIMEOUT)
     time.sleep(0.5)
     india_rental_sd_price = driver.find_element(*INDIA_RENTAL_SD_PRICE_INPUT)
     india_rental_sd_price.clear()
-    india_rental_sd_price.send_keys("149")
+    india_rental_sd_price.send_keys("49")
     time.sleep(0.3)
     india_rental_sd_perceived = driver.find_element(*INDIA_RENTAL_SD_PERCEIVED_INPUT)
     india_rental_sd_perceived.clear()
-    india_rental_sd_perceived.send_keys("299")
+    india_rental_sd_perceived.send_keys("79")
     time.sleep(0.3)
     save_ss(driver, "india_pricing_rental_sd_filled")
     
-    # Purchase Price - HD: Price ₹249, Perceived ₹399
-    logging.info("Setting India Purchase HD: Price ₹249, Perceived ₹399")
+    # Purchase Price - HD: Price ₹149, Perceived ₹249
+    logging.info("Setting India Purchase HD: Price ₹149, Perceived ₹249")
     safe_click(driver, INDIA_PURCHASE_HD_CHECKBOX, timeout=config.WAIT_TIMEOUT)
     time.sleep(0.5)
     india_purchase_hd_price = driver.find_element(*INDIA_PURCHASE_HD_PRICE_INPUT)
     india_purchase_hd_price.clear()
-    india_purchase_hd_price.send_keys("249")
+    india_purchase_hd_price.send_keys("149")
     time.sleep(0.3)
     india_purchase_hd_perceived = driver.find_element(*INDIA_PURCHASE_HD_PERCEIVED_INPUT)
     india_purchase_hd_perceived.clear()
-    india_purchase_hd_perceived.send_keys("399")
+    india_purchase_hd_perceived.send_keys("249")
     time.sleep(0.3)
     save_ss(driver, "india_pricing_purchase_hd_filled")
     
-    # Purchase Price - SD: Price ₹249, Perceived ₹399
-    logging.info("Setting India Purchase SD: Price ₹249, Perceived ₹399")
+    # Purchase Price - SD: Price ₹149, Perceived ₹249
+    logging.info("Setting India Purchase SD: Price ₹149, Perceived ₹249")
     safe_click(driver, INDIA_PURCHASE_SD_CHECKBOX, timeout=config.WAIT_TIMEOUT)
     time.sleep(0.5)
     india_purchase_sd_price = driver.find_element(*INDIA_PURCHASE_SD_PRICE_INPUT)
     india_purchase_sd_price.clear()
-    india_purchase_sd_price.send_keys("249")
+    india_purchase_sd_price.send_keys("149")
     time.sleep(0.3)
     india_purchase_sd_perceived = driver.find_element(*INDIA_PURCHASE_SD_PERCEIVED_INPUT)
     india_purchase_sd_perceived.clear()
-    india_purchase_sd_perceived.send_keys("399")
+    india_purchase_sd_perceived.send_keys("249")
     time.sleep(0.3)
     save_ss(driver, "india_pricing_purchase_sd_filled")
     
@@ -436,6 +513,7 @@ COUNTRY_CODE_MAP = {
     "FR": "France",
     "GF": "French Guiana",
     "PF": "French Polynesia",
+    "TF": "French Southern Territories",          # Added
     "GA": "Gabon",
     "GM": "Gambia",
     "GE": "Georgia",
@@ -507,7 +585,7 @@ COUNTRY_CODE_MAP = {
     "MS": "Montserrat",
     "MA": "Morocco",
     "MZ": "Mozambique",
-    "MM": "Myanmar",
+    "MM": "Myanmar (formerly Burma)",
     "NA": "Namibia",
     "NR": "Nauru",
     "NP": "Nepal",
@@ -523,7 +601,7 @@ COUNTRY_CODE_MAP = {
     "OM": "Oman",
     "PK": "Pakistan",
     "PW": "Palau",
-    "PS": "Palestine",
+    "PS": "Palestine State",
     "PA": "Panama",
     "PG": "Papua New Guinea",
     "PY": "Paraguay",
@@ -538,7 +616,7 @@ COUNTRY_CODE_MAP = {
     "RU": "Russia",
     "RW": "Rwanda",
     "RE": "Réunion",
-    "BL": "Saint Barthélemy",
+    "BL": "Saint Barthelemy",
     "SH": "Saint Helena",
     "KN": "Saint Kitts and Nevis",
     "LC": "Saint Lucia",
@@ -584,9 +662,10 @@ COUNTRY_CODE_MAP = {
     "TV": "Tuvalu",
     "UG": "Uganda",
     "UA": "Ukraine",
-    "AE": "UAE",
-    "GB": "UK",
-    "US": "USA",
+    "AE": "United Arab Emirates",
+    "GB": "United Kingdom",
+    "US": "United States of America",
+    "UM": "U.S. Minor Outlying Islands",   # Added
     "UY": "Uruguay",
     "UZ": "Uzbekistan",
     "VU": "Vanuatu",
@@ -599,6 +678,16 @@ COUNTRY_CODE_MAP = {
     "YE": "Yemen",
     "ZM": "Zambia",
     "ZW": "Zimbabwe",
+
+    # Newly added missing codes
+    "AX": "Aland Islands",
+    "BV": "Bouvet Island",
+    "CX": "Christmas Island",
+    "CC": "Cocos (Keeling) Islands",
+    "HM": "Heard Island and McDonald Islands",
+    "NF": "Norfolk Island",
+    "MP": "Northern Mariana Islands",
+    "SJ": "Svalbard and Jan Mayen"
 }
 
 
@@ -675,21 +764,21 @@ def get_country_pricing_selectors(country_name: str):
 def fill_country_pricing(driver, country_name: str, country_code: str):
     """
     Fill pricing for a specific country.
-    - India (IN): INR pricing (₹149/₹299 rental, ₹249/₹399 purchase)
-    - All other countries: USD pricing ($4.99/$7.99 rental, $9.99/$12.99 purchase)
+    - India (IN): INR pricing (₹49/₹79 rental, ₹149/₹249 purchase)
+    - All other countries: USD pricing ($4.99/$6.99 rental, $9.99/$12.99 purchase)
     Works for any country regardless of currency symbol (USD, CAD, GBP, etc.)
     """
     if country_code == "IN":
         # India pricing in INR
-        rental_price = "149"
-        rental_perceived = "299"
-        purchase_price = "249"
-        purchase_perceived = "399"
+        rental_price = "49"
+        rental_perceived = "79"
+        purchase_price = "149"
+        purchase_perceived = "249"
         logging.info("Filling India pricing (INR) for %s", country_name)
     else:
         # US pricing (default for all other countries, in their local currency)
         rental_price = "4.99"
-        rental_perceived = "7.99"
+        rental_perceived = "6.99"
         purchase_price = "9.99"
         purchase_perceived = "12.99"
         logging.info("Filling US pricing (local currency) for %s", country_name)
@@ -1476,10 +1565,12 @@ def main():
     )
     driver.get(campaign_url)
     time.sleep(2)
-    logging.info(
-        "Please login manually in the opened browser if required, then return to terminal and press ENTER."
-    )
-    input("Press ENTER after you log in and are on the campaign creation page with project cards visible...")
+    auto_ok = perform_login(driver)
+    if auto_ok:
+        logging.info("Automated login submitted. Waiting 2s before continuing...")
+        time.sleep(2)
+    logging.info("If login still needed, complete it in the browser.")
+    input("Press ENTER once you are on the campaign creation page with project cards visible...")
 
     try:
         run_vod_campaign_flow(driver, row)
